@@ -2,86 +2,80 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>IlyaTaxi — выбор адреса</title>
+    <title>IlyaTaxi — выбор точки</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <!-- Leaflet для карты -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
+    <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" type="text/javascript"></script>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-        }
-        #map {
-            width: 100vw;
-            height: 80vh;
-        }
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
+        #map { width: 100%; height: 90%; }
         #confirm {
             width: 100%;
-            height: 60px;
-            border: none;
-            font-size: 20px;
-            background: #2ea6ff;
+            height: 50px;
+            background-color: #2ea6ff;
             color: white;
+            font-size: 18px;
+            border: none;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-
 <div id="map"></div>
 <button id="confirm">Подтвердить точку</button>
 
 <script>
-    let tg = window.Telegram.WebApp;
-    tg.expand();
+let tg = window.Telegram.WebApp;
+tg.expand();
 
-    // Инициализация карты
-    let map = L.map('map').setView([55.751244, 37.618423], 12);
+let selectedCoords = null;
+let selectedAddress = "";
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-    }).addTo(map);
+// Инициализация карты
+ymaps.ready(init);
+function init(){
+    var map = new ymaps.Map("map", {
+        center: [55.751244, 37.618423], // Москва
+        zoom: 10,
+        controls: ['zoomControl']
+    });
 
-    let marker = null;
+    var placemark = null;
 
-    function onMapClick(e) {
-        if (marker) map.removeLayer(marker);
-        marker = L.marker(e.latlng).addTo(map);
-        window.selectedPoint = e.latlng;
-    }
+    // Обработка клика
+    map.events.add('click', function (e) {
+        let coords = e.get('coords');
+        selectedCoords = coords;
 
-    map.on("click", onMapClick);
-
-    // Получение адреса через Nominatim
-    async function reverseGeo(lat, lon) {
-        let url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
-        let res = await fetch(url);
-        let data = await res.json();
-        return data.display_name || "Адрес не найден";
-    }
-
-    document.getElementById("confirm").onclick = async () => {
-        if (!window.selectedPoint) {
-            alert("Пожалуйста, выберите точку на карте");
-            return;
+        if (placemark) {
+            map.geoObjects.remove(placemark);
         }
 
-        let lat = window.selectedPoint.lat;
-        let lon = window.selectedPoint.lng;
+        placemark = new ymaps.Placemark(coords, {}, {preset: 'islands#redDotIcon'});
+        map.geoObjects.add(placemark);
 
-        let address = await reverseGeo(lat, lon);
+        // Получаем адрес через геокодинг
+        ymaps.geocode(coords).then(function(res){
+            var firstGeoObject = res.geoObjects.get(0);
+            selectedAddress = firstGeoObject ? firstGeoObject.getAddressLine() : "Адрес не найден";
+        });
+    });
+}
 
-        let result = {
-            lat: lat,
-            lon: lon,
-            address: address
-        };
+// Подтверждение
+document.getElementById("confirm").onclick = () => {
+    if (!selectedCoords) {
+        alert("Пожалуйста, выберите точку на карте");
+        return;
+    }
 
-        tg.sendData(JSON.stringify(result));
+    let payload = {
+        lat: selectedCoords[0],
+        lon: selectedCoords[1],
+        address: selectedAddress
     };
-</script>
 
+    tg.sendData(JSON.stringify(payload));
+};
+</script>
 </body>
 </html>
