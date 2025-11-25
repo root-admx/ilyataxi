@@ -1,23 +1,15 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>IlyaTaxi — выбор точки</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" type="text/javascript"></script>
-    <style>
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
-        #map { width: 100%; height: 90%; }
-        #confirm {
-            width: 100%;
-            height: 50px;
-            background-color: #2ea6ff;
-            color: white;
-            font-size: 18px;
-            border: none;
-            cursor: pointer;
-        }
-    </style>
+<meta charset="UTF-8">
+<title>IlyaTaxi — выбор точки</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" type="text/javascript"></script>
+<style>
+html, body { margin:0; padding:0; width:100%; height:100%; }
+#map { width:100%; height:90%; }
+#confirm { width:100%; height:50px; background:#2ea6ff; color:#fff; font-size:18px; border:none; cursor:pointer; }
+</style>
 </head>
 <body>
 <div id="map"></div>
@@ -31,37 +23,39 @@ let selectedCoords = null;
 let selectedAddress = "";
 
 // Инициализация карты
-ymaps.ready(init);
-function init(){
-    var map = new ymaps.Map("map", {
-        center: [55.751244, 37.618423], // Москва
-        zoom: 10,
-        controls: ['zoomControl']
-    });
-
-    var placemark = null;
-
-    // Обработка клика
-    map.events.add('click', function (e) {
-        let coords = e.get('coords');
-        selectedCoords = coords;
-
-        if (placemark) {
-            map.geoObjects.remove(placemark);
-        }
-
-        placemark = new ymaps.Placemark(coords, {}, {preset: 'islands#redDotIcon'});
-        map.geoObjects.add(placemark);
-
-        // Получаем адрес через геокодинг
-        ymaps.geocode(coords).then(function(res){
-            var firstGeoObject = res.geoObjects.get(0);
-            selectedAddress = firstGeoObject ? firstGeoObject.getAddressLine() : "Адрес не найден";
+ymaps.ready(function() {
+    try {
+        let map = new ymaps.Map("map", {
+            center: [55.751244, 37.618423], // Москва по умолчанию
+            zoom: 10,
+            controls: ['zoomControl']
         });
-    });
-}
 
-// Подтверждение
+        let placemark = null;
+
+        map.events.add('click', function(e){
+            let coords = e.get('coords');
+            selectedCoords = coords;
+
+            if(placemark) map.geoObjects.remove(placemark);
+
+            placemark = new ymaps.Placemark(coords, {}, {preset:'islands#redDotIcon'});
+            map.geoObjects.add(placemark);
+
+            // Получаем адрес через геокодинг
+            ymaps.geocode(coords).then(function(res){
+                let firstGeoObject = res.geoObjects.get(0);
+                selectedAddress = firstGeoObject ? firstGeoObject.getAddressLine() : "Адрес не найден";
+            });
+        });
+
+    } catch(e) {
+        console.error("Ошибка инициализации карты:", e);
+        document.getElementById('map').innerHTML = "Не удалось загрузить карту. Попробуйте открыть WebApp в браузере.";
+    }
+});
+
+// Подтверждение выбора точки
 document.getElementById("confirm").onclick = () => {
     if (!selectedCoords) {
         alert("Пожалуйста, выберите точку на карте");
