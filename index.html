@@ -8,9 +8,8 @@
     <!-- Подключаем Telegram Web App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     
-    <!-- Подключаем Leaflet (карты) -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Подключаем API Яндекс.Карт -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=1587243c-5e9c-4503-a484-0ad97845e38c&lang=ru_RU" type="text/javascript"></script>
     
     <!-- Стили -->
     <style>
@@ -85,7 +84,7 @@
         }
         
         .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #ff0000 0%, #cc0000 100%);
             color: white;
             border: none;
             padding: 12px 24px;
@@ -99,7 +98,7 @@
         
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 4px 15px rgba(255, 0, 0, 0.4);
         }
         
         .btn:disabled {
@@ -107,20 +106,6 @@
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
-        }
-        
-        .marker-popup {
-            text-align: center;
-        }
-        
-        .marker-popup h3 {
-            color: #333;
-            margin-bottom: 5px;
-        }
-        
-        .marker-popup p {
-            color: #666;
-            font-size: 12px;
         }
         
         .loading {
@@ -134,6 +119,38 @@
             font-size: 11px;
             color: #999;
             margin-top: 5px;
+        }
+        
+        /* Стили для балуна Яндекс.Карт */
+        .ymaps-balloon {
+            border-radius: 12px !important;
+        }
+        
+        .ymaps-balloon__content {
+            padding: 15px !important;
+            border-radius: 12px !important;
+        }
+        
+        .custom-balloon {
+            text-align: center;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        .custom-balloon h3 {
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        
+        .custom-balloon p {
+            color: #666;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        
+        .custom-balloon .coordinates {
+            color: #999;
+            font-size: 12px;
         }
     </style>
 </head>
@@ -171,8 +188,8 @@
     <script>
         // ==================== ИНИЦИАЛИЗАЦИЯ ====================
         let map;
-        let marker = null;
-        let selectedLatLng = null;
+        let selectedPlacemark = null;
+        let selectedCoordinates = null;
         let selectedAddress = "";
         
         // Элементы DOM
@@ -184,189 +201,183 @@
         // ==================== ТЕЛЕГРАМ ИНИЦИАЛИЗАЦИЯ ====================
         function initTelegram() {
             try {
-                // Расширяем на весь экран
                 Telegram.WebApp.expand();
-                
-                // Меняем цвет фона
                 Telegram.WebApp.setBackgroundColor('#667eea');
                 Telegram.WebApp.setHeaderColor('#667eea');
-                
                 console.log('Telegram WebApp initialized');
             } catch (error) {
                 console.log('Not in Telegram environment:', error);
             }
         }
         
-        // ==================== ИНИЦИАЛИЗАЦИЯ КАРТЫ ====================
+        // ==================== ИНИЦИАЛИЗАЦИЯ ЯНДЕКС.КАРТ ====================
         function initMap() {
-            // Создаем карту
-            map = L.map('map').setView([55.7558, 37.6173], 13); // Москва по умолчанию
-            
-            // Добавляем слой карты
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors',
-                maxZoom: 18
-            }).addTo(map);
-            
-            // Обработчик клика по карте
-            map.on('click', onMapClick);
-            
-            // Пытаемся определить местоположение пользователя
-            locateUser();
+            ymaps.ready(function() {
+                // Создаем карту
+                map = new ymaps.Map('map', {
+                    center: [55.7558, 37.6173], // Москва по умолчанию
+                    zoom: 13,
+                    controls: ['zoomControl', 'geolocationControl']
+                }, {
+                    searchControlProvider: 'yandex#search'
+                });
+                
+                // Стилизуем карту
+                map.options.set({
+                    suppressMapOpenBlock: true
+                });
+                
+                // Обработчик клика по карте
+                map.events.add('click', onMapClick);
+                
+                // Пытаемся определить местоположение пользователя
+                locateUser();
+                
+                console.log('Yandex Map initialized');
+            });
         }
         
         // ==================== ОПРЕДЕЛЕНИЕ МЕСТОПОЛОЖЕНИЯ ====================
         function locateUser() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const userLat = position.coords.latitude;
-                        const userLng = position.coords.longitude;
-                        
-                        // Центрируем карту на пользователе
-                        map.setView([userLat, userLng], 15);
-                        
-                        // Добавляем маркер местоположения пользователя
-                        L.marker([userLat, userLng])
-                            .addTo(map)
-                            .bindPopup('Ваше текущее местоположение')
-                            .openPopup();
-                            
-                        console.log('User location found:', userLat, userLng);
-                    },
-                    function(error) {
-                        console.log('Geolocation error:', error);
-                        // Используем местоположение по умолчанию (Москва)
+            ymaps.geolocation.get({
+                provider: 'browser',
+                mapStateAutoApply: true
+            }).then(function(result) {
+                // Центрируем карту на пользователе
+                map.setCenter(result.geoObjects.position, 15);
+                
+                // Добавляем маркер местоположения пользователя
+                const userPlacemark = new ymaps.Placemark(
+                    result.geoObjects.position,
+                    {
+                        hintContent: 'Ваше текущее местоположение',
+                        balloonContent: 'Вы находитесь здесь'
                     },
                     {
-                        enableHighAccuracy: true,
-                        timeout: 10000,
-                        maximumAge: 60000
+                        preset: 'islands#blueCircleIcon'
                     }
                 );
-            }
+                
+                map.geoObjects.add(userPlacemark);
+                console.log('User location found');
+            }).catch(function(error) {
+                console.log('Geolocation error:', error);
+                // Используем местоположение по умолчанию
+            });
         }
         
         // ==================== ОБРАБОТЧИК КЛИКА ПО КАРТЕ ====================
         function onMapClick(e) {
-            selectedLatLng = e.latlng;
+            const coords = e.get('coords');
+            selectedCoordinates = coords;
             
             // Показываем загрузку
             loading.style.display = 'block';
             addressText.innerHTML = 'Определяем адрес...';
-            coordinatesText.textContent = `Широта: ${selectedLatLng.lat.toFixed(6)}, Долгота: ${selectedLatLng.lng.toFixed(6)}`;
+            coordinatesText.textContent = `Широта: ${coords[0].toFixed(6)}, Долгота: ${coords[1].toFixed(6)}`;
             confirmBtn.disabled = true;
             
             // Удаляем предыдущий маркер
-            if (marker) {
-                map.removeLayer(marker);
+            if (selectedPlacemark) {
+                map.geoObjects.remove(selectedPlacemark);
             }
             
-            // Добавляем новый маркер
-            marker = L.marker(selectedLatLng).addTo(map);
-            
             // Получаем адрес по координатам
-            getAddressFromCoordinates(selectedLatLng.lat, selectedLatLng.lng);
+            getAddressFromCoordinates(coords[0], coords[1]);
         }
         
         // ==================== ПОЛУЧЕНИЕ АДРЕСА ПО КООРДИНАТАМ ====================
         function getAddressFromCoordinates(lat, lng) {
-            // Используем Nominatim (OpenStreetMap) для геокодирования
-            const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1&accept-language=ru`;
-            
-            fetch(url)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
+            ymaps.geocode([lat, lng]).then(function(res) {
+                const firstGeoObject = res.geoObjects.get(0);
+                
+                if (firstGeoObject) {
                     // Форматируем адрес
-                    selectedAddress = formatAddress(data);
+                    selectedAddress = firstGeoObject.getAddress();
+                    
+                    // Создаем метку на карте
+                    selectedPlacemark = new ymaps.Placemark(
+                        [lat, lng],
+                        {
+                            hintContent: selectedAddress,
+                            balloonContent: `
+                                <div class="custom-balloon">
+                                    <h3>✅ Выбранный адрес</h3>
+                                    <p>${selectedAddress}</p>
+                                    <p class="coordinates">${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
+                                </div>
+                            `
+                        },
+                        {
+                            preset: 'islands#redIcon',
+                            balloonCloseButton: false
+                        }
+                    );
+                    
+                    // Добавляем метку на карту
+                    map.geoObjects.add(selectedPlacemark);
+                    
+                    // Открываем балун
+                    selectedPlacemark.balloon.open();
                     
                     // Обновляем интерфейс
                     addressText.innerHTML = `<strong>${selectedAddress}</strong>`;
                     coordinatesText.textContent = `Широта: ${lat.toFixed(6)}, Долгота: ${lng.toFixed(6)}`;
                     
-                    // Обновляем попап маркера
-                    marker.bindPopup(`
-                        <div class="marker-popup">
-                            <h3>✅ Выбранный адрес</h3>
-                            <p>${selectedAddress}</p>
-                            <p class="coordinates">${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
-                        </div>
-                    `).openPopup();
-                    
                     // Активируем кнопку подтверждения
                     confirmBtn.disabled = false;
                     loading.style.display = 'none';
-                })
-                .catch(error => {
-                    console.error('Error getting address:', error);
                     
-                    // Если не удалось получить адрес, используем координаты
-                    selectedAddress = `Координаты: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-                    addressText.innerHTML = `<strong>${selectedAddress}</strong><br>
-                                           <small>Не удалось определить адрес</small>`;
-                    
-                    marker.bindPopup(`
-                        <div class="marker-popup">
-                            <h3>📍 Выбранная точка</h3>
-                            <p>Координаты: ${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
-                        </div>
-                    `).openPopup();
-                    
-                    confirmBtn.disabled = false;
-                    loading.style.display = 'none';
-                });
-        }
-        
-        // ==================== ФОРМАТИРОВАНИЕ АДРЕСА ====================
-        function formatAddress(data) {
-            if (!data || !data.address) {
-                return "Адрес не определен";
-            }
-            
-            const addr = data.address;
-            let addressParts = [];
-            
-            // Собираем адрес из доступных частей
-            if (addr.road) addressParts.push(addr.road);
-            if (addr.house_number) addressParts.push(addr.house_number);
-            
-            let formattedAddress = addressParts.join(', ');
-            
-            // Добавляем город/район если есть
-            if (addr.city) {
-                formattedAddress += `, ${addr.city}`;
-            } else if (addr.town) {
-                formattedAddress += `, ${addr.town}`;
-            } else if (addr.village) {
-                formattedAddress += `, ${addr.village}`;
-            }
-            
-            // Если адрес слишком короткий, используем display_name
-            if (formattedAddress.length < 5 && data.display_name) {
-                // Берем первую часть длинного адреса
-                const parts = data.display_name.split(',');
-                formattedAddress = parts.slice(0, 3).join(', ');
-            }
-            
-            return formattedAddress || data.display_name || "Адрес не определен";
+                } else {
+                    throw new Error('Address not found');
+                }
+            }).catch(function(error) {
+                console.error('Error getting address:', error);
+                
+                // Если не удалось получить адрес, используем координаты
+                selectedAddress = `Координаты: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+                
+                // Создаем метку с координатами
+                selectedPlacemark = new ymaps.Placemark(
+                    [lat, lng],
+                    {
+                        hintContent: 'Выбранная точка',
+                        balloonContent: `
+                            <div class="custom-balloon">
+                                <h3>📍 Выбранная точка</h3>
+                                <p>Координаты: ${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
+                                <p><em>Не удалось определить адрес</em></p>
+                            </div>
+                        `
+                    },
+                    {
+                        preset: 'islands#redIcon',
+                        balloonCloseButton: false
+                    }
+                );
+                
+                map.geoObjects.add(selectedPlacemark);
+                selectedPlacemark.balloon.open();
+                
+                addressText.innerHTML = `<strong>${selectedAddress}</strong><br>
+                                       <small>Не удалось определить адрес</small>`;
+                
+                confirmBtn.disabled = false;
+                loading.style.display = 'none';
+            });
         }
         
         // ==================== ПОДТВЕРЖДЕНИЕ ВЫБОРА ====================
         function confirmSelection() {
-            if (!selectedLatLng || !selectedAddress) {
+            if (!selectedCoordinates || !selectedAddress) {
                 alert('Пожалуйста, выберите точку на карте');
                 return;
             }
             
             // Создаем объект с данными
             const pointData = {
-                lat: selectedLatLng.lat,
-                lon: selectedLatLng.lng,
+                lat: selectedCoordinates[0],
+                lon: selectedCoordinates[1],
                 address: selectedAddress
             };
             
