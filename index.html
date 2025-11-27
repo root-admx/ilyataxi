@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Выбор адреса для такси</title>
+    
+    <!-- Подключаем Telegram Web App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <!-- Подключаем Яндекс.Карты -->
+    <script src="https://api-maps.yandex.ru/2.1/?apikey=ВАШ_API_КЛЮЧ&lang=ru_RU" type="text/javascript"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .header {
+            background: white;
+            padding: 15px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        #map {
+            flex: 1;
+            width: 100%;
+        }
+        
+        .controls {
+            background: white;
+            padding: 15px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .selected-address {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            min-height: 60px;
+        }
+        
+        .selected-address h3 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        
+        .address-text {
+            color: #666;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #FF0000 0%, #CC0000 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(255, 0, 0, 0.4);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 10px;
+            color: #666;
+        }
+        
+        .coordinates {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        
+        .retry-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚕 Выберите адрес назначения</h1>
+            <p>Нажмите на карту чтобы выбрать точку</p>
+        </div>
+        
+        <div id="map"></div>
+        
+        <div class="controls">
+            <div class="selected-address">
+                <h3>Выбранный адрес:</h3>
+                <div class="address-text" id="addressText">
+                    Нажмите на карту чтобы выбрать адрес...
+                </div>
+                <div class="coordinates" id="coordinatesText"></div>
+                <div class="error-message" id="errorText" style="display: none;">
+                    Не удалось определить точный адрес. Вы можете:
+                    <button class="retry-button" onclick="retryGeocoding()">Попробовать снова</button>
+                    или подтвердить с координатами
+                </div>
+            </div>
+            
+            <div class="loading" id="loading">
+                ⏳ Определяем адрес...
+            </div>
+            
+            <button class="btn" id="confirmBtn" disabled>
+                ✅ Подтвердить адрес
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==================== ИНИЦИАЛИЗАЦИЯ ====================
+        let map;
+        let selectedPlacemark = null;
+        let selectedCoordinates = null;
+        let selectedAddress = "";
+        let lastClickedCoords = null;
+        
+        // Элементы DOM
+        const addressText = document.getElementById('addressText');
+        const coordinatesText = document.getElementById('coordinatesText');
+        const confirmBtn = document.getElementById('confirmBtn');
+        const loading = document.getElementById('loading');
+        const errorText = document.getElementById('errorText');
+
+        // ==================== ТЕЛЕГРАМ ИНИЦИАЛИЗАЦИЯ ====================
+        function initTelegram() {
+            try {
+                Telegram.WebApp.expand();
+                Telegram.WebApp.setBackgroundColor('#f8f9fa');
+                Telegram.WebApp.setHeaderColor('#f8f9fa');
+                console.log('Telegram WebApp initialized');
+            } catch (error) {
+                console.log('Not in Telegram environment:', error);
+            }
+        }
+
+        // ==================== ИНИЦИАЛИЗАЦИЯ ЯНДЕКС.КАРТ ====================
+        function initMap() {
+            ymaps.ready(function() {
+                // Создаем карту
+                map = new ymaps.Map('map', {
+                    center: [55.7558, 37.6173], // Москва по умолчанию
+                    zoom: 12,
+                    controls: ['zoomControl', 'geolocationControl', 'fullscreenControl']
+                }, {
+                    searchControlProvider: 'yandex#search'
+                });
+
+                // Улучшаем отображение карты
+                map.options.set({
+                    suppressMapOpenBlock: true
+                });
+
+                // Обработчик клика по карте
+                map.events.add('click', onMapClick);
+
+                // Пытаемся определить местоположение пользователя
+                locateUser();
+
+                console.log('Yandex Map initialized');
+            });
+        }
+
+        // ==================== ОПРЕДЕЛЕНИЕ МЕСТОПОЛОЖЕНИЯ ====================
+        function locateUser() {
+            ymaps.geolocation.get({
+                provider: 'browser',
+                mapStateAutoApply: true
+            }).then(function(result) {
+                // Центрируем карту на пользователе
+                map.setCenter(result.geoObjects.position, 15);
+                
+                // Добавляем маркер местоположения пользователя
+                const userPlacemark = new ymaps.Placemark(
+                    result.geoObjects.position,
+                    {
+                        hintContent: 'Ваше текущее местоположение',
+                        balloonContent: 'Вы находитесь здесь'
+                    },
+                    {
+                        preset: 'islands#blueCircleIcon',
+                        balloonCloseButton: false
+                    }
+                );
+                
+                map.geoObjects.add(userPlacemark);
+                console.log('User location found');
+            }).catch(function(error) {
+                console.log('Geolocation error:', error);
+                // Используем местоположение по умолчанию
+            });
+        }
+
+        // ==================== ОБРАБОТЧИК КЛИКА ПО КАРТЕ ====================
+        function onMapClick(e) {
+            const coords = e.get('coords');
+            selectedCoordinates = coords;
+            lastClickedCoords = coords;
+            
+            // Показываем загрузку
+            loading.style.display = 'block';
+            errorText.style.display = 'none';
+            addressText.innerHTML = 'Определяем адрес...';
+            coordinatesText.textContent = `Широта: ${coords[0].toFixed(6)}, Долгота: ${coords[1].toFixed(6)}`;
+            confirmBtn.disabled = true;
+
+            // Удаляем предыдущий маркер
+            if (selectedPlacemark) {
+                map.geoObjects.remove(selectedPlacemark);
+            }
+
+            // Создаем временный маркер
+            selectedPlacemark = new ymaps.Placemark(
+                coords,
+                {
+                    hintContent: 'Определяем адрес...',
+                    balloonContent: 'Определяем адрес...'
+                },
+                {
+                    preset: 'islands#grayIcon',
+                    balloonCloseButton: false
+                }
+            );
+            
+            map.geoObjects.add(selectedPlacemark);
+
+            // Получаем адрес по координатам
+            getAddressFromCoordinates(coords[0], coords[1]);
+        }
+
+        // ==================== ПОЛУЧЕНИЕ АДРЕСА ПО КООРДИНАТАМ ====================
+        function getAddressFromCoordinates(lat, lng) {
+            // Используем несколько методов для лучшего определения адреса
+            ymaps.geocode([lat, lng], {
+                kind: 'house', // Ищем именно дома
+                results: 1
+            }).then(function(res) {
+                const firstGeoObject = res.geoObjects.get(0);
+                
+                if (firstGeoObject) {
+                    // Получаем подробный адрес
+                    selectedAddress = getDetailedAddress(firstGeoObject);
+                    
+                    // Обновляем метку на карте
+                    updatePlacemark(lat, lng, selectedAddress, 'success');
+                    
+                    // Обновляем интерфейс
+                    addressText.innerHTML = `<strong>${selectedAddress}</strong>`;
+                    coordinatesText.textContent = `Широта: ${lat.toFixed(6)}, Долгота: ${lng.toFixed(6)}`;
+                    
+                    // Активируем кнопку подтверждения
+                    confirmBtn.disabled = false;
+                    loading.style.display = 'none';
+                    errorText.style.display = 'none';
+                    
+                } else {
+                    // Если не нашли дом, пробуем найти улицу
+                    tryStreetLevelGeocoding(lat, lng);
+                }
+            }).catch(function(error) {
+                console.error('Geocoding error:', error);
+                handleGeocodingError(lat, lng);
+            });
+        }
+
+        // ==================== ГЕОКОДИНГ НА УРОВНЕ УЛИЦЫ ====================
+        function tryStreetLevelGeocoding(lat, lng) {
+            ymaps.geocode([lat, lng], {
+                kind: 'street', // Ищем улицу
+                results: 1
+            }).then(function(res) {
+                const firstGeoObject = res.geoObjects.get(0);
+                
+                if (firstGeoObject) {
+                    selectedAddress = firstGeoObject.getAddress() + ' (ориентир)';
+                    
+                    updatePlacemark(lat, lng, selectedAddress, 'warning');
+                    
+                    addressText.innerHTML = `<strong>${selectedAddress}</strong><br><small>Точный адрес не найден, используется ориентир</small>`;
+                    coordinatesText.textContent = `Широта: ${lat.toFixed(6)}, Долгота: ${lng.toFixed(6)}`;
+                    
+                    confirmBtn.disabled = false;
+                    loading.style.display = 'none';
+                    errorText.style.display = 'none';
+                    
+                } else {
+                    // Если не нашли даже улицу
+                    handleGeocodingError(lat, lng);
+                }
+            }).catch(function(error) {
+                console.error('Street geocoding error:', error);
+                handleGeocodingError(lat, lng);
+            });
+        }
+
+        // ==================== ОБРАБОТКА ОШИБОК ГЕОКОДИНГА ====================
+        function handleGeocodingError(lat, lng) {
+            selectedAddress = `Координаты: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+            
+            updatePlacemark(lat, lng, 'Адрес не определен', 'error');
+            
+            addressText.innerHTML = `<strong>${selectedAddress}</strong>`;
+            coordinatesText.textContent = `Широта: ${lat.toFixed(6)}, Долгота: ${lng.toFixed(6)}`;
+            
+            // Показываем ошибку, но разрешаем подтвердить
+            errorText.style.display = 'block';
+            confirmBtn.disabled = false;
+            loading.style.display = 'none';
+        }
+
+        // ==================== ПОВТОРНАЯ ПОПЫТКА ГЕОКОДИНГА ====================
+        function retryGeocoding() {
+            if (lastClickedCoords) {
+                loading.style.display = 'block';
+                errorText.style.display = 'none';
+                addressText.innerHTML = 'Повторно определяем адрес...';
+                confirmBtn.disabled = true;
+                
+                getAddressFromCoordinates(lastClickedCoords[0], lastClickedCoords[1]);
+            }
+        }
+
+        // ==================== ПОЛУЧЕНИЕ ПОДРОБНОГО АДРЕСА ====================
+        function getDetailedAddress(geoObject) {
+            try {
+                const address = geoObject.getAddress();
+                const properties = geoObject.properties.getAll();
+                
+                // Если есть компоненты адреса, формируем красивый адрес
+                if (properties.geocoderMetaData && properties.geocoderMetaData.Address) {
+                    const addr = properties.geocoderMetaData.Address;
+                    let parts = [];
+                    
+                    if (addr.country) parts.push(addr.country);
+                    if (addr.province) parts.push(addr.province);
+                    if (addr.area) parts.push(addr.area);
+                    if (addr.locality) parts.push(addr.locality);
+                    if (addr.district) parts.push(addr.district);
+                    if (addr.street) parts.push(addr.street);
+                    if (addr.house) parts.push('д.' + addr.house);
+                    
+                    if (parts.length > 0) {
+                        return parts.join(', ');
+                    }
+                }
+                
+                return address;
+                
+            } catch (error) {
+                console.error('Error getting detailed address:', error);
+                return geoObject.getAddress();
+            }
+        }
+
+        // ==================== ОБНОВЛЕНИЕ МЕТКИ НА КАРТЕ ====================
+        function updatePlacemark(lat, lng, address, status) {
+            // Удаляем старую метку
+            if (selectedPlacemark) {
+                map.geoObjects.remove(selectedPlacemark);
+            }
+            
+            // Выбираем иконку в зависимости от статуса
+            let preset, balloonContent;
+            switch(status) {
+                case 'success':
+                    preset = 'islands#greenIcon';
+                    balloonContent = `
+                        <div style="padding: 10px; text-align: center;">
+                            <h3 style="margin: 0 0 8px 0; color: #333;">✅ Адрес определен</h3>
+                            <p style="margin: 0 0 5px 0; color: #666;">${address}</p>
+                            <p style="margin: 0; color: #999; font-size: 12px;">${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
+                        </div>
+                    `;
+                    break;
+                case 'warning':
+                    preset = 'islands#orangeIcon';
+                    balloonContent = `
+                        <div style="padding: 10px; text-align: center;">
+                            <h3 style="margin: 0 0 8px 0; color: #333;">⚠️ Ориентир</h3>
+                            <p style="margin: 0 0 5px 0; color: #666;">${address}</p>
+                            <p style="margin: 0; color: #999; font-size: 12px;">Точный адрес не найден</p>
+                        </div>
+                    `;
+                    break;
+                case 'error':
+                    preset = 'islands#redIcon';
+                    balloonContent = `
+                        <div style="padding: 10px; text-align: center;">
+                            <h3 style="margin: 0 0 8px 0; color: #333;">❌ Адрес не найден</h3>
+                            <p style="margin: 0 0 5px 0; color: #666;">Используются координаты</p>
+                            <p style="margin: 0; color: #999; font-size: 12px;">${lat.toFixed(6)}, ${lng.toFixed(6)}</p>
+                        </div>
+                    `;
+                    break;
+            }
+            
+            // Создаем новую метку
+            selectedPlacemark = new ymaps.Placemark(
+                [lat, lng],
+                {
+                    hintContent: address,
+                    balloonContent: balloonContent
+                },
+                {
+                    preset: preset,
+                    balloonCloseButton: false,
+                    balloonAutoPan: true
+                }
+            );
+            
+            map.geoObjects.add(selectedPlacemark);
+            selectedPlacemark.balloon.open();
+        }
+
+        // ==================== ПОДТВЕРЖДЕНИЕ ВЫБОРА ====================
+        function confirmSelection() {
+            if (!selectedCoordinates || !selectedAddress) {
+                alert('Пожалуйста, выберите точку на карте');
+                return;
+            }
+            
+            // Создаем объект с данными
+            const pointData = {
+                lat: selectedCoordinates[0],
+                lon: selectedCoordinates[1],
+                address: selectedAddress
+            };
+            
+            console.log('Sending data to bot:', pointData);
+            
+            // Отправляем данные в Telegram бот
+            try {
+                Telegram.WebApp.sendData(JSON.stringify(pointData));
+                
+                // Показываем подтверждение
+                confirmBtn.textContent = '✅ Отправлено!';
+                confirmBtn.style.background = '#28a745';
+                
+                // Закрываем WebApp через 1 секунду
+                setTimeout(() => {
+                    Telegram.WebApp.close();
+                }, 1000);
+                
+            } catch (error) {
+                console.error('Error sending data:', error);
+                alert('Ошибка отправки данных. Попробуйте снова.');
+            }
+        }
+
+        // ==================== ОБРАБОТЧИКИ СОБЫТИЙ ====================
+        document.getElementById('confirmBtn').addEventListener('click', confirmSelection);
+
+        // ==================== ЗАПУСК ПРИЛОЖЕНИЯ ====================
+        document.addEventListener('DOMContentLoaded', function() {
+            initTelegram();
+            initMap();
+        });
+    </script>
+</body>
+</html>
